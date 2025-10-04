@@ -1,0 +1,266 @@
+version: '3.8'
+
+# NumberOne OWU - Complete AI Platform Stack
+# This compose file deploys the entire AI platform including:
+# - Open WebUI (AI chat interface)
+# - Ollama (local LLM runtime)
+# - Qdrant (vector database)
+# - Langfuse (LLM observability)
+# - Pipelines (AI processing filters)
+
+networks:
+  numberone-network:
+    driver: bridge
+    name: numberone-network
+
+volumes:
+  ollama_data:
+    name: ollama_data
+  qdrant_data:
+    name: qdrant_data
+  openwebui_data:
+    name: openwebui_data
+  langfuse_db_data:
+    name: langfuse_db_data
+  clickhouse_data:
+    name: clickhouse_data
+  pipelines_data:
+    name: pipelines_data
+
+services:
+  # =============================================================================
+  # OLLAMA - Local LLM Runtime
+  # =============================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: numberone-ollama
+    restart: unless-stopped
+    networks:
+      - numberone-network
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+      - OLLAMA_HOST=0.0.0.0:11434
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # =============================================================================
+  # QDRANT - Vector Database for Memory Storage
+  # =============================================================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: numberone-qdrant
+    restart: unless-stopped
+    networks:
+      - numberone-network
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # =============================================================================
+  # LANGFUSE - LLM Observability Platform
+  # =============================================================================
+  langfuse-db:
+    image: postgres:15
+    container_name: numberone-langfuse-db
+    restart: unless-stopped
+    networks:
+      - numberone-network
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_db_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1
+    container_name: numberone-clickhouse
+    restart: unless-stopped
+    networks:
+      - numberone-network
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "8124:8123"
+      - "9001:9000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: numberone-langfuse
+    restart: unless-stopped
+    networks:
+      - numberone-network
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    ports:
+      - "3003:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@langfuse-db:5432/langfuse
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_SECRET:-changeme-secret-key}
+      SALT: ${LANGFUSE_SALT:-changeme-salt}
+      NEXTAUTH_URL: http://localhost:3003
+      TELEMETRY_ENABLED: false
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # =============================================================================
+  # PIPELINES - AI Processing Filters
+  # =============================================================================
+  pipelines:
+    image: ghcr.io/open-webui/pipelines:main
+    container_name: numberone-pipelines
+    restart: unless-stopped
+    networks:
+      - numberone-network
+    ports:
+      - "9099:9099"
+    volumes:
+      - pipelines_data:/app/pipelines
+      - ../pipelines:/app/pipelines:ro
+    environment:
+      - PORT=9099
+      - HOST=0.0.0.0
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9099/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # =============================================================================
+  # OPEN WEBUI - AI Chat Interface
+  # =============================================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.6.32
+    container_name: numberone-openwebui
+    restart: unless-stopped
+    networks:
+      - numberone-network
+    ports:
+      - "3000:8080"
+    volumes:
+      - openwebui_data:/app/backend/data
+    environment:
+      # Pipeline Integration
+      - OPENAI_API_BASE_URL=http://pipelines:9099
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-0p3n-w3bu!}
+      
+      # Ollama Integration
+      - OLLAMA_BASE_URL=http://ollama:11434
+      
+      # Optional: External API Keys
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
+      
+      # WebUI Configuration
+      - WEBUI_NAME=NumberOne OWU
+      - WEBUI_URL=http://localhost:3000
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-changeme-secret}
+      
+      # Features
+      - ENABLE_RAG_HYBRID_SEARCH=true
+      - ENABLE_RAG_WEB_LOADER=true
+      - ENABLE_IMAGE_GENERATION=false
+      - ENABLE_COMMUNITY_SHARING=false
+      
+      # Security
+      - WEBUI_AUTH=true
+      - DEFAULT_USER_ROLE=user
+      
+    depends_on:
+      pipelines:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # =============================================================================
+  # SYSTEM DASHBOARD - Monitoring Interface
+  # =============================================================================
+  dashboard:
+    build:
+      context: ../monitoring/dashboard
+      dockerfile: Dockerfile
+    container_name: numberone-dashboard
+    restart: unless-stopped
+    networks:
+      - numberone-network
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVICES_CONFIG=/app/config/services.json
+    volumes:
+      - ../monitoring/dashboard/config:/app/config:ro
+    depends_on:
+      - open-webui
+      - langfuse
+      - qdrant
+      - ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

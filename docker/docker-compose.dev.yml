@@ -1,0 +1,271 @@
+version: '3.8'
+
+# NumberOne OWU - Development Environment
+# This compose file provides a development-friendly setup with:
+# - Hot reload capabilities
+# - Debug logging
+# - Development tools
+# - Exposed debug ports
+
+networks:
+  numberone-dev-network:
+    driver: bridge
+    name: numberone-dev-network
+
+volumes:
+  ollama_dev_data:
+    name: ollama_dev_data
+  qdrant_dev_data:
+    name: qdrant_dev_data
+  openwebui_dev_data:
+    name: openwebui_dev_data
+  langfuse_dev_db_data:
+    name: langfuse_dev_db_data
+  clickhouse_dev_data:
+    name: clickhouse_dev_data
+  redis_dev_data:
+    name: redis_dev_data
+
+services:
+  # =============================================================================
+  # OLLAMA - Local LLM Runtime (Development)
+  # =============================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: numberone-dev-ollama
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_dev_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=1m  # Shorter for development
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_DEBUG=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # =============================================================================
+  # QDRANT - Vector Database (Development)
+  # =============================================================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: numberone-dev-qdrant
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_dev_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__LOG_LEVEL=DEBUG
+
+  # =============================================================================
+  # LANGFUSE - LLM Observability (Development)
+  # =============================================================================
+  langfuse-db:
+    image: postgres:15
+    container_name: numberone-dev-langfuse-db
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_dev_db_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1
+    container_name: numberone-dev-clickhouse
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+    volumes:
+      - clickhouse_dev_data:/var/lib/clickhouse
+    ports:
+      - "8124:8123"
+      - "9001:9000"
+
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: numberone-dev-langfuse
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    depends_on:
+      - langfuse-db
+      - clickhouse
+    ports:
+      - "3003:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@langfuse-db:5432/langfuse
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+      NEXTAUTH_SECRET: dev-secret-key
+      SALT: dev-salt
+      NEXTAUTH_URL: http://localhost:3003
+      TELEMETRY_ENABLED: false
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: true
+      # Development settings
+      NODE_ENV: development
+      LOG_LEVEL: debug
+
+  # =============================================================================
+  # PIPELINES - AI Processing Filters (Development)
+  # =============================================================================
+  pipelines:
+    image: ghcr.io/open-webui/pipelines:main
+    container_name: numberone-dev-pipelines
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    ports:
+      - "9099:9099"
+      - "5678:5678"  # Debug port for Python debugging
+    volumes:
+      # Mount pipelines directory for hot reload
+      - ../pipelines:/app/pipelines:rw
+    environment:
+      - PORT=9099
+      - HOST=0.0.0.0
+      - PYTHONPATH=/app
+      # Development settings
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    depends_on:
+      - qdrant
+      - ollama
+
+  # =============================================================================
+  # OPEN WEBUI - AI Chat Interface (Development)
+  # =============================================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.6.32
+    container_name: numberone-dev-openwebui
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    ports:
+      - "3000:8080"
+    volumes:
+      - openwebui_dev_data:/app/backend/data
+      # Mount custom configurations for development
+      - ../config:/app/config:ro
+    environment:
+      # Pipeline Integration
+      - OPENAI_API_BASE_URL=http://pipelines:9099
+      - OPENAI_API_KEY=dev-api-key
+      
+      # Ollama Integration
+      - OLLAMA_BASE_URL=http://ollama:11434
+      
+      # Development API Keys (use .env for real keys)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
+      
+      # WebUI Configuration
+      - WEBUI_NAME=NumberOne OWU (Dev)
+      - WEBUI_URL=http://localhost:3000
+      - WEBUI_SECRET_KEY=dev-secret-key
+      
+      # Development Features
+      - ENABLE_RAG_HYBRID_SEARCH=true
+      - ENABLE_RAG_WEB_LOADER=true
+      - ENABLE_IMAGE_GENERATION=false
+      - ENABLE_COMMUNITY_SHARING=false
+      
+      # Development Settings
+      - WEBUI_AUTH=false  # Disable auth for development
+      - DEFAULT_USER_ROLE=admin
+      - LOG_LEVEL=DEBUG
+      - DEBUG=true
+      
+    depends_on:
+      - pipelines
+      - ollama
+
+  # =============================================================================
+  # DEVELOPMENT TOOLS
+  # =============================================================================
+  
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: numberone-dev-redis
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_dev_data:/data
+
+  # Adminer for database management
+  adminer:
+    image: adminer:latest
+    container_name: numberone-dev-adminer
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: langfuse-db
+
+  # Nginx for reverse proxy and static file serving
+  nginx:
+    image: nginx:alpine
+    container_name: numberone-dev-nginx
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../config/nginx/dev.conf:/etc/nginx/nginx.conf:ro
+      - ../config/nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - open-webui
+      - langfuse
+
+  # File browser for easy file management
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: numberone-dev-filebrowser
+    restart: unless-stopped
+    networks:
+      - numberone-dev-network
+    ports:
+      - "8081:80"
+    volumes:
+      - ../:/srv:rw
+      - ../config/filebrowser/database.db:/database.db
+      - ../config/filebrowser/settings.json:/config/settings.json
+    environment:
+      - FB_DATABASE=/database.db
+      - FB_CONFIG=/config/settings.json
+
+

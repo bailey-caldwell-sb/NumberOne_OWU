@@ -1,0 +1,282 @@
+name: NumberOne OWU CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # =============================================================================
+  # Code Quality & Testing
+  # =============================================================================
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black isort pytest
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        
+    - name: Lint with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 pipelines/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 pipelines/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        
+    - name: Check code formatting with black
+      run: |
+        black --check pipelines/
+        
+    - name: Check import sorting with isort
+      run: |
+        isort --check-only pipelines/
+        
+    - name: Test pipeline imports
+      run: |
+        python -c "
+        import sys
+        sys.path.append('pipelines')
+        try:
+            import mem0_memory_filter
+            import langfuse_tracking
+            import perplexity_search
+            print('✅ All pipelines import successfully')
+        except ImportError as e:
+            print(f'❌ Import error: {e}')
+            sys.exit(1)
+        "
+
+  # =============================================================================
+  # Docker Build & Test
+  # =============================================================================
+  docker-test:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Test Docker Compose
+      run: |
+        # Test that docker-compose.yml is valid
+        docker-compose -f docker/docker-compose.yml config
+        
+    - name: Test service startup
+      run: |
+        cd docker
+        # Start core services for testing
+        docker-compose up -d qdrant ollama
+        
+        # Wait for services
+        sleep 30
+        
+        # Test health endpoints
+        curl -f http://localhost:6333/health || exit 1
+        curl -f http://localhost:11434/api/tags || exit 1
+        
+        # Cleanup
+        docker-compose down -v
+
+  # =============================================================================
+  # Security Scanning
+  # =============================================================================
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # =============================================================================
+  # Documentation Build
+  # =============================================================================
+  docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Validate Markdown
+      uses: DavidAnson/markdownlint-cli2-action@v13
+      with:
+        globs: '**/*.md'
+        
+    - name: Check links
+      uses: gaurav-nelson/github-action-markdown-link-check@v1
+      with:
+        use-quiet-mode: 'yes'
+        use-verbose-mode: 'yes'
+        config-file: '.github/mlc_config.json'
+
+  # =============================================================================
+  # Integration Tests
+  # =============================================================================
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test, docker-test]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up test environment
+      run: |
+        cp .env.example .env
+        # Set test configuration
+        echo "MEM0_USER=test_user" >> .env
+        echo "LANGFUSE_SECRET=test-secret-key-for-ci-testing" >> .env
+        echo "LANGFUSE_SALT=test-salt-ci" >> .env
+        
+    - name: Start services
+      run: |
+        cd docker
+        docker-compose up -d
+        
+    - name: Wait for services
+      run: |
+        # Wait up to 5 minutes for services to be ready
+        timeout 300 bash -c '
+        while ! curl -f http://localhost:3000 >/dev/null 2>&1; do
+          echo "Waiting for Open WebUI..."
+          sleep 10
+        done
+        while ! curl -f http://localhost:6333/health >/dev/null 2>&1; do
+          echo "Waiting for Qdrant..."
+          sleep 10
+        done
+        while ! curl -f http://localhost:11434/api/tags >/dev/null 2>&1; do
+          echo "Waiting for Ollama..."
+          sleep 10
+        done
+        '
+        
+    - name: Test API endpoints
+      run: |
+        # Test Open WebUI
+        curl -f http://localhost:3000 || exit 1
+        
+        # Test Qdrant
+        curl -f http://localhost:6333/health || exit 1
+        
+        # Test Ollama
+        curl -f http://localhost:11434/api/tags || exit 1
+        
+        # Test Pipelines
+        curl -f http://localhost:9099/health || exit 1
+        
+    - name: Test pipeline loading
+      run: |
+        # Check if pipelines are loaded
+        response=$(curl -s -H "Authorization: Bearer 0p3n-w3bu!" http://localhost:9099/pipelines)
+        echo "Pipeline response: $response"
+        
+        # Check for expected pipelines
+        echo "$response" | grep -q "mem0_memory_filter" || exit 1
+        echo "$response" | grep -q "langfuse_tracking" || exit 1
+        echo "$response" | grep -q "perplexity_search" || exit 1
+        
+    - name: Cleanup
+      if: always()
+      run: |
+        cd docker
+        docker-compose down -v
+        docker system prune -f
+
+  # =============================================================================
+  # Release Build
+  # =============================================================================
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [test, docker-test, security, docs, integration]
+    if: github.event_name == 'release'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Create release archive
+      run: |
+        # Create release package
+        tar -czf numberone-owu-${{ github.event.release.tag_name }}.tar.gz \
+          --exclude='.git' \
+          --exclude='*.tar.gz' \
+          --exclude='data/' \
+          --exclude='logs/' \
+          --exclude='backups/' \
+          .
+          
+    - name: Upload release asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./numberone-owu-${{ github.event.release.tag_name }}.tar.gz
+        asset_name: numberone-owu-${{ github.event.release.tag_name }}.tar.gz
+        asset_content_type: application/gzip
+
+  # =============================================================================
+  # Deployment (if configured)
+  # =============================================================================
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [test, docker-test, security, integration]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Deploy to staging
+      run: |
+        echo "🚀 Deployment would happen here"
+        echo "This is a placeholder for actual deployment logic"
+        # Add your deployment commands here
+        # Example: SSH to server and run deployment script
+        # ssh user@server 'cd /path/to/app && ./scripts/deploy.sh'

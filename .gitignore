@@ -1,0 +1,122 @@
+# =============================================================================
+# NumberOne OWU - Git Ignore Configuration
+# =============================================================================
+
+# Environment & Secrets
+.env
+.env.local
+.env.production
+.env.staging
+*.key
+*.pem
+*.p12
+secrets/
+config/secrets/
+
+# Data & Logs
+data/
+logs/
+backups/
+*.log
+*.log.*
+
+# Docker
+docker-compose.override.yml
+.docker/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Node.js (for dashboard)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+
+# Temporary Files
+*.tmp
+*.temp
+.cache/
+.temp/
+
+# AI Models (too large for git)
+*.gguf
+*.bin
+models/
+ollama_data/
+
+# Database Files
+*.db
+*.sqlite
+*.sqlite3
+
+# Monitoring & Analytics
+grafana/
+prometheus/
+*.rrd
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup Files
+*.bak
+*.backup
+*.old
+
+# Test Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Documentation Build
+docs/_build/
+site/
+
+# Local Development
+local/
+dev/
+debug/
