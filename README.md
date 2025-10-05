@@ -5,10 +5,12 @@
 ## 🌟 Features
 
 ### 🧠 **Advanced AI Capabilities**
-- **16 Local Models**: Qwen3, Gemma3, Phi4, CodeLlama, and more via Ollama
+- **19 Local Models**: Including 3 ultra-fast models (qwen2.5:0.5b, tinyllama, llama3.2:1b)
+- **Lightning-Fast Responses**: Sub-second inference with optimized small models
+- **Image Generation**: DALL-E, Automatic1111, ComfyUI, and Image Router support
 - **Persistent Memory**: Mem0 integration with vector storage for cross-conversation memory
 - **Web Search**: Perplexity API integration for real-time information retrieval
-- **Multi-Modal Support**: Text, voice, and document processing
+- **Multi-Modal Support**: Text, voice, images, and document processing
 
 ### 📊 **Observability & Analytics**
 - **LLM Tracking**: Langfuse integration for comprehensive AI interaction monitoring
@@ -51,6 +53,19 @@ cp .env.example .env
 # Or manually with Docker Compose
 docker-compose up -d
 ```
+
+### 3. Install Fast Models (Optional)
+```bash
+# Install 3 ultra-fast models for instant responses
+./scripts/install-fast-models.sh
+```
+
+### 4. Configure Image Generation (Optional)
+```bash
+# Test image generation setup
+./scripts/test-image-generation.py
+```
+See [Image Generation Setup Guide](docs/IMAGE_GENERATION_SETUP.md) for detailed configuration.
 
 ## 📦 Installation
 
@@ -133,6 +148,18 @@ NumberOne_OWU/
 - **codellama:13b** - Specialized for code generation
 - **qwen2.5:7b** - Balanced performance for general tasks
 - **And 11 more models** for specialized use cases
+
+### ⚡ Ultra-Fast Models (NEW!)
+- **qwen2.5:0.5b** (397 MB): Lightning-fast responses in ~0.16s
+- **tinyllama** (637 MB): Efficient for simple conversations
+- **llama3.2:1b** (1.3 GB): Best speed/quality balance
+- **Perfect for**: Quick questions, rapid prototyping, instant responses
+
+### 🎨 Image Generation (NEW!)
+- **DALL-E Integration**: OpenAI DALL-E 2, 3, and GPT-Image-1 support
+- **Local Generation**: Automatic1111 and ComfyUI compatibility
+- **Image Router**: Access to multiple image generation models
+- **Seamless Integration**: Generate images directly in chat conversations
 
 ### Memory System (Mem0)
 - **Cross-Conversation Memory**: Remember context across chats

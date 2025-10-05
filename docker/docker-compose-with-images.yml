@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  langfuse-db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_db_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    networks:
+      - ai-network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1
+    restart: always
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "8124:8123"
+      - "9001:9000"
+    networks:
+      - ai-network
+
+  langfuse:
+    image: langfuse/langfuse:latest
+    restart: always
+    depends_on:
+      - langfuse-db
+      - clickhouse
+    ports:
+      - "3003:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@langfuse-db:5432/langfuse
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+      NEXTAUTH_SECRET: mysecret
+      SALT: mysalt
+      NEXTAUTH_URL: http://localhost:3003
+      TELEMETRY_ENABLED: false
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: true
+    networks:
+      - ai-network
+
+  # Image Generation with Fooocus (Easier setup than Automatic1111)
+  fooocus:
+    image: konieshadow/fooocus:latest
+    container_name: fooocus-webui
+    ports:
+      - "7865:7865"
+    volumes:
+      - fooocus_data:/content/data
+      - fooocus_models:/content/data/models
+      - fooocus_outputs:/content/data/outputs
+    environment:
+      - CMDARGS=--listen 0.0.0.0 --port 7865 --always-high-vram
+    restart: unless-stopped
+    networks:
+      - ai-network
+    # Uncomment if you have NVIDIA GPU
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  langfuse_db_data:
+  clickhouse_data:
+  fooocus_data:
+    driver: local
+  fooocus_models:
+    driver: local
+  fooocus_outputs:
+    driver: local
+
+networks:
+  ai-network:
+    driver: bridge
+    external: false
