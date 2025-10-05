@@ -37,6 +37,8 @@
 - 16GB+ RAM (recommended)
 - NVIDIA GPU (optional, for faster inference)
 
+> **🍎 macOS Users**: See [macOS Setup Guide](docs/MACOS_SETUP.md) for platform-specific instructions
+
 ### 1. Clone & Setup
 ```bash
 git clone https://github.com/yourusername/NumberOne_OWU.git

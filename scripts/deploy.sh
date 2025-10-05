@@ -89,7 +89,16 @@ setup_environment() {
 
 check_gpu_support() {
     log_info "Checking GPU support..."
-    
+
+    # Check if running on macOS
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        log_info "Running on macOS - GPU acceleration not available"
+        log_info "Docker Desktop for Mac does not support GPU passthrough"
+        log_info "All models will run on CPU (slower but functional)"
+        export GPU_SUPPORT=false
+        return
+    fi
+
     if command -v nvidia-smi &> /dev/null; then
         if nvidia-smi &> /dev/null; then
             log_success "NVIDIA GPU detected and available"

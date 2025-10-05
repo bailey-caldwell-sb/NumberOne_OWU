@@ -167,6 +167,46 @@ docker exec numberone-ollama ollama list | grep nomic-embed
 curl -X DELETE http://localhost:6333/collections/memories
 ```
 
+**Common Error Messages**:
+
+**"Connection refused to Qdrant"**:
+```bash
+# Verify Qdrant is running
+docker-compose ps qdrant
+
+# Check Qdrant logs
+docker-compose logs qdrant
+
+# Verify network connectivity
+docker exec numberone-pipelines ping -c 3 qdrant
+
+# Restart Qdrant
+docker-compose restart qdrant
+```
+
+**"Embedding model not found"**:
+```bash
+# Pull the embedding model
+docker exec numberone-ollama ollama pull nomic-embed-text:latest
+
+# Verify model installed
+docker exec numberone-ollama ollama list | grep nomic-embed
+
+# Check model dimensions match (768)
+# Verify vector_store_qdrant_dims in pipeline valves
+```
+
+**"Memory thread timeout"**:
+```bash
+# Check if previous memory operation is stuck
+docker-compose logs pipelines | grep -i "memory"
+
+# Restart pipelines service
+docker-compose restart pipelines
+
+# Reduce store_cycles in pipeline settings (e.g., from 3 to 5)
+```
+
 ### 🔍 Search Pipeline Issues
 
 #### Perplexity Search Not Working
@@ -500,6 +540,131 @@ docker run --rm -v volume_name:/data -v $(pwd):/backup \
     alpine tar -xzf /backup/volume_backup.tar.gz -C /data
 ```
 
+### 🖼️ Image Generation Issues
+
+#### DALL-E Not Working
+
+**Problem**: Image generation fails or returns errors.
+
+**Solutions**:
+```bash
+# Verify OpenAI API key
+echo $OPENAI_API_KEY
+
+# Test API key
+curl https://api.openai.com/v1/models \
+  -H "Authorization: Bearer $OPENAI_API_KEY"
+
+# Check Open WebUI image generation settings
+# Admin → Settings → Images
+
+# Verify ENABLE_IMAGE_GENERATION is true
+docker exec numberone-openwebui env | grep IMAGE
+```
+
+**Common Errors**:
+
+**"Invalid API key"**:
+- Verify API key is correct in `.env`
+- Restart Open WebUI: `docker-compose restart open-webui`
+- Check API key has image generation permissions
+
+**"Rate limit exceeded"**:
+- Check OpenAI usage dashboard
+- Implement request queuing
+- Consider switching to local generation (ComfyUI/Automatic1111)
+
+#### Local Image Generation (ComfyUI/Automatic1111)
+
+**Problem**: Local image generation not connecting.
+
+**Solutions**:
+```bash
+# Check if image generation service is running
+docker-compose ps | grep -E "comfy|automatic"
+
+# Verify network connectivity
+docker exec numberone-openwebui curl http://comfyui:8188/health
+
+# Check image generation logs
+docker-compose logs comfyui
+
+# Restart image generation services
+docker-compose restart comfyui
+```
+
+### 🐳 Docker Issues
+
+#### Container Keeps Restarting
+
+**Problem**: Service enters restart loop.
+
+**Solutions**:
+```bash
+# Check container status
+docker-compose ps
+
+# View recent logs (last 100 lines)
+docker-compose logs --tail=100 servicename
+
+# Check exit code
+docker inspect numberone-servicename | grep ExitCode
+
+# Disable restart to debug
+docker-compose up --no-recreate servicename
+
+# Common exit codes:
+# 137: Out of memory (OOM killed)
+# 139: Segmentation fault
+# 1: General application error
+```
+
+#### Volume Permission Issues
+
+**Problem**: Permission denied errors in containers.
+
+**Solutions**:
+```bash
+# Check volume ownership
+docker volume inspect volume_name
+
+# Fix permissions (Linux)
+sudo chown -R 1000:1000 /var/lib/docker/volumes/volume_name
+
+# Fix permissions (macOS - usually not needed)
+# Docker Desktop handles permissions automatically
+
+# Recreate volume with correct permissions
+docker-compose down
+docker volume rm volume_name
+docker-compose up -d
+```
+
+#### Network Issues
+
+**Problem**: Containers can't communicate.
+
+**Solutions**:
+```bash
+# List Docker networks
+docker network ls
+
+# Inspect network
+docker network inspect numberone-network
+
+# Verify all services on same network
+docker network inspect numberone-network | grep -A 5 Containers
+
+# Recreate network
+docker-compose down
+docker network rm numberone-network
+docker-compose up -d
+
+# Test connectivity between containers
+docker exec numberone-openwebui ping -c 3 ollama
+docker exec numberone-pipelines curl http://qdrant:6333/health
+```
+
 ## 📞 Getting Help
 
 ### Log Collection
@@ -511,6 +676,12 @@ docker-compose logs > debug-logs/all-services.log
 docker stats --no-stream > debug-logs/resource-usage.txt
 df -h > debug-logs/disk-usage.txt
 free -h > debug-logs/memory-usage.txt
+docker network inspect numberone-network > debug-logs/network-info.txt
+
+# Collect service-specific logs
+docker-compose logs ollama > debug-logs/ollama.log
+docker-compose logs pipelines > debug-logs/pipelines.log
+docker-compose logs open-webui > debug-logs/open-webui.log
 
 # Create debug archive
 tar -czf debug-$(date +%Y%m%d_%H%M%S).tar.gz debug-logs/
