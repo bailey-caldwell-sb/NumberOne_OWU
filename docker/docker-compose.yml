@@ -44,19 +44,21 @@ services:
     environment:
       - OLLAMA_KEEP_ALIVE=5m
       - OLLAMA_HOST=0.0.0.0:11434
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+    # GPU support disabled for Mac compatibility
+    # Uncomment below for NVIDIA GPU support on Linux:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 5
+    #   start_period: 60s
 
   # =============================================================================
   # QDRANT - Vector Database for Memory Storage
@@ -75,12 +77,12 @@ services:
     environment:
       - QDRANT__SERVICE__HTTP_PORT=6333
       - QDRANT__SERVICE__GRPC_PORT=6334
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:6333/"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 10s
 
   # =============================================================================
   # LANGFUSE - LLM Observability Platform
@@ -174,10 +176,8 @@ services:
       - PORT=9099
       - HOST=0.0.0.0
     depends_on:
-      qdrant:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
+      - qdrant
+      - ollama
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9099/health"]
       interval: 30s
@@ -226,10 +226,8 @@ services:
       - DEFAULT_USER_ROLE=user
       
     depends_on:
-      pipelines:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
+      - pipelines
+      - ollama
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
